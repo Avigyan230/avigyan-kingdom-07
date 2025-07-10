@@ -2,16 +2,27 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, updateDoc, increment, serverTimestamp } from 'firebase/firestore';
+import { getAnalytics } from "firebase/analytics"; // Import getAnalytics
 
-// Ensure __app_id, __firebase_config, and __initial_auth_token are defined in the environment
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+// Hardcoded Firebase configuration
+const firebaseConfig = {
+    apiKey: "AIzaSyALaDwF8hdnD9GTpSi28z5oi1mRJ2eqCs0",
+    authDomain: "avigyan-kingdom.firebaseapp.com",
+    projectId: "avigyan-kingdom",
+    storageBucket: "avigyan-kingdom.firebasestorage.app",
+    messagingSenderId: "182327203291",
+    appId: "1:182327203291:web:0a2d05a6ac8e1206a643fe",
+    measurementId: "G-36N8EEG1EP"
+};
+
+// Set appId directly from the projectId for consistency with Firestore paths
+const appId = firebaseConfig.projectId;
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
+const analytics = getAnalytics(app); // Initialize Analytics
 
 // Hardcoded user credentials
 const USERS = {
@@ -30,20 +41,25 @@ const App = () => {
     const [isAuthReady, setIsAuthReady] = useState(false);
     const [message, setMessage] = useState('');
 
+    // Log Firebase config to console for debugging
+    console.log("Firebase Config:", firebaseConfig);
+
     // Firebase Authentication Listener
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (!user) {
                 // If no user is logged in, try to sign in with custom token or anonymously
                 try {
-                    if (initialAuthToken) {
-                        await signInWithCustomToken(auth, initialAuthToken);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
+                    console.log("Attempting anonymous sign-in. Auth object:", auth); // Debug log
+                    await signInAnonymously(auth);
                 } catch (error) {
                     console.error("Error signing in:", error);
-                    setMessage("Authentication failed. Please try again.");
+                    // Provide a more specific message for the user
+                    if (error.code === 'auth/configuration-not-found') {
+                        setMessage("Authentication setup error: Please ensure Firebase Authentication is enabled and Anonymous sign-in is active in your Firebase Console.");
+                    } else {
+                        setMessage("Authentication failed. Please try again.");
+                    }
                 }
             }
             // Set userId after auth state is determined. This userId is for private data.
@@ -179,8 +195,22 @@ const Login = ({ onLoginSuccess, setMessage }) => {
 const Game = ({ loggedInUser, userId, db, navigateToLeaderboard, handleLogout }) => {
     const GAME_DURATION = 30; // seconds
     const MISS_LIMIT = 5;
-    const EMOJI_SPAWN_INTERVAL = 800; // ms
-    const EMOJI_SPEED_INITIAL = 2; // pixels per frame
+
+    // Difficulty settings
+    const DIFFICULTY_SETTINGS = {
+        easy: {
+            EMOJI_SPAWN_INTERVAL: 1200, // ms
+            EMOJI_SPEED_INITIAL: 1.5, // pixels per frame
+        },
+        medium: {
+            EMOJI_SPAWN_INTERVAL: 800,
+            EMOJI_SPEED_INITIAL: 2,
+        },
+        hard: {
+            EMOJI_SPAWN_INTERVAL: 500,
+            EMOJI_SPEED_INITIAL: 3,
+        },
+    };
 
     const [score, setScore] = useState(0);
     const [missedCount, setMissedCount] = useState(0);
@@ -189,15 +219,15 @@ const Game = ({ loggedInUser, userId, db, navigateToLeaderboard, handleLogout })
     const [gameStarted, setGameStarted] = useState(false);
     const [gameOver, setGameOver] = useState(false);
     const [message, setMessage] = useState('');
+    const [difficulty, setDifficulty] = useState('medium'); // Default difficulty
 
     const gameIntervalRef = useRef(null);
     const emojiSpawnIntervalRef = useRef(null);
     const emojiFallIntervalRef = useRef(null);
     const gameAreaRef = useRef(null);
 
-    // Changed emojiTypes to only include poop emoji
     const emojiTypes = ['💩'];
-    const bonusEmojiType = '💰'; // Bonus emoji (still exists for variety)
+    const bonusEmojiType = '💰';
 
     // Function to save score to Firestore
     const saveScore = useCallback(async (finalScore) => {
@@ -325,25 +355,29 @@ const Game = ({ loggedInUser, userId, db, navigateToLeaderboard, handleLogout })
     // Emoji Spawning
     useEffect(() => {
         if (gameStarted && !gameOver) {
+            // Get current difficulty settings
+            const currentDifficulty = DIFFICULTY_SETTINGS[difficulty];
+            const spawnInterval = currentDifficulty.EMOJI_SPAWN_INTERVAL;
+            const initialSpeed = currentDifficulty.EMOJI_SPEED_INITIAL;
+
             emojiSpawnIntervalRef.current = setInterval(() => {
                 if (gameAreaRef.current) {
                     const gameAreaWidth = gameAreaRef.current.offsetWidth;
-                    // Now, only poop emoji will be chosen, unless it's a bonus emoji
-                    const type = Math.random() < 0.15 ? bonusEmojiType : emojiTypes[0]; // 15% chance for bonus, otherwise poop
+                    const type = Math.random() < 0.15 ? bonusEmojiType : emojiTypes[0];
                     const newEmoji = {
                         id: Date.now() + Math.random(),
-                        x: Math.random() * (gameAreaWidth - 50), // 50px for emoji size
-                        y: -50, // Start above the screen
-                        speed: EMOJI_SPEED_INITIAL + (score / 100), // Speed increases with score
+                        x: Math.random() * (gameAreaWidth - 50),
+                        y: -50,
+                        speed: initialSpeed + (score / 100), // Speed increases with score
                         type: type,
-                        points: type === bonusEmojiType ? 10 : 1, // Bonus emoji gives more points
+                        points: type === bonusEmojiType ? 10 : 1,
                     };
                     setEmojis((prevEmojis) => [...prevEmojis, newEmoji]);
                 }
-            }, EMOJI_SPAWN_INTERVAL);
+            }, spawnInterval); // Use difficulty-based spawn interval
         }
         return () => clearInterval(emojiSpawnIntervalRef.current);
-    }, [gameStarted, gameOver, score]);
+    }, [gameStarted, gameOver, score, difficulty]); // Add difficulty to dependencies
 
     // Emoji Falling Logic
     useEffect(() => {
@@ -369,14 +403,14 @@ const Game = ({ loggedInUser, userId, db, navigateToLeaderboard, handleLogout })
                         (emoji) => gameAreaRef.current && emoji.y <= gameAreaRef.current.offsetHeight
                     );
                 });
-            }, 20); // Update every 20ms for smooth animation
+            }, 20);
         }
         return () => clearInterval(emojiFallIntervalRef.current);
     }, [gameStarted, gameOver, missedCount, endGame]);
 
     // Handle Emoji Click
     const handleEmojiClick = (id, points) => {
-        console.log('Emoji clicked!', { id, points }); // Added for debugging
+        console.log('Emoji clicked!', { id, points });
         setScore((prevScore) => prevScore + points);
         setEmojis((prevEmojis) => prevEmojis.filter((emoji) => emoji.id !== id));
     };
@@ -412,13 +446,13 @@ const Game = ({ loggedInUser, userId, db, navigateToLeaderboard, handleLogout })
             <div className="text-center mb-6">
                 <h2 className="text-4xl font-bold text-yellow-200 mb-2">Welcome, {loggedInUser}!</h2>
                 <p className="text-purple-200 text-lg">Tap the falling emojis!</p>
-                {/* Removed userId display here as it's for private data, public leaderboard is separate */}
             </div>
 
             <div className="flex justify-around w-full text-xl font-semibold mb-6 text-yellow-100">
                 <span>Score: {score}</span>
                 <span>Time: {timer}s</span>
                 <span>Misses: {missedCount}/{MISS_LIMIT}</span>
+                <span>Difficulty: {difficulty.charAt(0).toUpperCase() + difficulty.slice(1)}</span>
             </div>
 
             <div
@@ -428,7 +462,22 @@ const Game = ({ loggedInUser, userId, db, navigateToLeaderboard, handleLogout })
             >
                 {!gameStarted && !gameOver && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-70 text-white">
-                        <p className="text-3xl font-bold mb-4 animate-pulse">Ready to Play?</p>
+                        <p className="text-3xl font-bold mb-4 animate-pulse">Choose Difficulty:</p>
+                        <div className="flex space-x-4 mb-6">
+                            {Object.keys(DIFFICULTY_SETTINGS).map((level) => (
+                                <button
+                                    key={level}
+                                    onClick={() => setDifficulty(level)}
+                                    className={`py-2 px-6 rounded-full shadow-lg transition duration-300 transform hover:scale-110 focus:outline-none focus:ring-4
+                                        ${difficulty === level
+                                            ? 'bg-yellow-400 text-purple-900 ring-yellow-300'
+                                            : 'bg-purple-700 text-white hover:bg-purple-600 ring-purple-500'
+                                        }`}
+                                >
+                                    {level.charAt(0).toUpperCase() + level.slice(1)}
+                                </button>
+                            ))}
+                        </div>
                         <button
                             onClick={startGame}
                             className="bg-green-500 text-white font-bold py-3 px-8 rounded-full shadow-lg hover:bg-green-600 transition duration-300 transform hover:scale-110 focus:outline-none focus:ring-4 focus:ring-green-400"
@@ -591,4 +640,3 @@ const Leaderboard = ({ db, navigateToGame, handleLogout }) => {
 };
 
 export default App;
-
