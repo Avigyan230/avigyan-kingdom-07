@@ -1,642 +1,239 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, doc, getDoc, setDoc, onSnapshot, collection, query, where, updateDoc, increment, serverTimestamp } from 'firebase/firestore';
-import { getAnalytics } from "firebase/analytics"; // Import getAnalytics
+// App.jsx
+import React, { useState } from 'react';
+import Login from './Login';
+import Game from './Game';
+import Leaderboard from './Leaderboard';
+import './styles.css';
 
-// Hardcoded Firebase configuration
-const firebaseConfig = {
-    apiKey: "AIzaSyALaDwF8hdnD9GTpSi28z5oi1mRJ2eqCs0",
-    authDomain: "avigyan-kingdom.firebaseapp.com",
-    projectId: "avigyan-kingdom",
-    storageBucket: "avigyan-kingdom.firebasestorage.app",
-    messagingSenderId: "182327203291",
-    appId: "1:182327203291:web:0a2d05a6ac8e1206a643fe",
-    measurementId: "G-36N8EEG1EP"
+export default function App() {
+  const [user, setUser] = useState(null);
+  const [view, setView] = useState('login');
+
+  if (!user) return <Login onLogin={(u) => { setUser(u); setView('game'); }} />;
+
+  return (
+    <div className="app">
+      {view === 'game' && <Game user={user} goToLeaderboard={() => setView('leaderboard')} />}
+      {view === 'leaderboard' && <Leaderboard goBack={() => setView('game')} />}
+    </div>
+  );
+}
+
+// Login.jsx
+import React, { useState } from 'react';
+
+const credentials = {
+  piku: 'dhiku',
+  gunja: 'goru',
+  chotu: 'gadha',
+  mam: 'hagu',
+  avigyan: 'king',
 };
 
-// Set appId directly from the projectId for consistency with Firestore paths
-const appId = firebaseConfig.projectId;
+export default function Login({ onLogin }) {
+  const [id, setId] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
 
-// Initialize Firebase App
+  const handleLogin = () => {
+    if (credentials[id] === password) {
+      onLogin(id);
+    } else {
+      setError('Invalid ID or Password');
+    }
+  };
+
+  return (
+    <div className="login">
+      <h2>Login to Avigyan Kingdom</h2>
+      <input placeholder="User ID" value={id} onChange={(e) => setId(e.target.value)} />
+      <input placeholder="Password" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+      <button onClick={handleLogin}>Login</button>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
+}
+
+// Game.jsx
+import React, { useEffect, useState } from 'react';
+import { db, collection, addDoc, Timestamp } from './firebase';
+
+export default function Game({ user, goToLeaderboard }) {
+  const [score, setScore] = useState(0);
+  const [time, setTime] = useState(30);
+  const [misses, setMisses] = useState(0);
+  const [difficulty, setDifficulty] = useState('easy');
+  const [showPoop, setShowPoop] = useState(true);
+  const [poopPosition, setPoopPosition] = useState({ top: '50%', left: '50%' });
+
+  const scoreMap = { easy: 1, medium: 1.5, hard: 3 };
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTime((t) => t - 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (time <= 0 || misses >= 3) endGame();
+  }, [time, misses]);
+
+  const handleHit = () => {
+    setScore((s) => s + scoreMap[difficulty]);
+    randomizePoop();
+  };
+
+  const handleMiss = () => {
+    setMisses((m) => m + 1);
+    randomizePoop();
+  };
+
+  const randomizePoop = () => {
+    setPoopPosition({
+      top: `${Math.random() * 70 + 10}%`,
+      left: `${Math.random() * 70 + 10}%`,
+    });
+  };
+
+  const endGame = async () => {
+    await addDoc(collection(db, 'scores'), {
+      user,
+      score,
+      difficulty,
+      time: Timestamp.now(),
+    });
+    goToLeaderboard();
+  };
+
+  return (
+    <div className="game">
+      <h2>Tap the Poop!</h2>
+      <p>Time: {time}s | Score: {score} | Misses: {misses}/3</p>
+      <select value={difficulty} onChange={(e) => setDifficulty(e.target.value)}>
+        <option value="easy">Easy</option>
+        <option value="medium">Medium</option>
+        <option value="hard">Hard</option>
+      </select>
+      <div
+        className="poop"
+        onClick={handleHit}
+        style={{ top: poopPosition.top, left: poopPosition.left }}
+      >
+        💩
+      </div>
+      <div className="misszone" onClick={handleMiss}></div>
+    </div>
+  );
+}
+
+// Leaderboard.jsx
+import React, { useEffect, useState } from 'react';
+import { db, collection, getDocs, deleteDoc, Timestamp } from './firebase';
+
+export default function Leaderboard({ goBack }) {
+  const [scores, setScores] = useState([]);
+
+  useEffect(() => {
+    const loadScores = async () => {
+      const snap = await getDocs(collection(db, 'scores'));
+      const data = [];
+      const now = Timestamp.now().seconds;
+      snap.forEach((doc) => {
+        const item = doc.data();
+        if (now - item.time.seconds <= 2592000) {
+          data.push(item);
+        } else {
+          deleteDoc(doc.ref);
+        }
+      });
+      setScores(data.sort((a, b) => b.score - a.score));
+    };
+    loadScores();
+  }, []);
+
+  return (
+    <div className="leaderboard">
+      <h2>Leaderboard</h2>
+      {scores.map((s, i) => (
+        <div key={i} className="entry">
+          {s.user} - {s.score} ({s.difficulty})
+        </div>
+      ))}
+      <button onClick={goBack}>Back to Game</button>
+    </div>
+  );
+}
+
+// firebase.js
+import { initializeApp } from 'firebase/app';
+import { getFirestore, collection, addDoc, query, where, getDocs, Timestamp, deleteDoc } from 'firebase/firestore';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyA...", // Preconfigured Firebase
+  authDomain: "avigyan-tap.firebaseapp.com",
+  projectId: "avigyan-tap",
+  storageBucket: "avigyan-tap.appspot.com",
+  messagingSenderId: "...",
+  appId: "..."
+};
+
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const auth = getAuth(app);
-const analytics = getAnalytics(app); // Initialize Analytics
+export { db, collection, addDoc, query, where, getDocs, Timestamp, deleteDoc };
 
-// Hardcoded user credentials
-const USERS = {
-    avigyan: 'king',
-    piku: 'dhiku',
-    chotu: 'gadha',
-    gunja: 'hagu',
-    mam: 'goru',
-};
+// styles.css
+body {
+  font-family: 'Comic Sans MS', cursive;
+  background: linear-gradient(to bottom right, #ffecd2, #fcb69f);
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+}
 
-// Main App Component
-const App = () => {
-    const [loggedInUser, setLoggedInUser] = useState(null);
-    const [currentPage, setCurrentPage] = useState('login'); // 'login', 'game', 'leaderboard'
-    const [userId, setUserId] = useState(null);
-    const [isAuthReady, setIsAuthReady] = useState(false);
-    const [message, setMessage] = useState('');
+.app {
+  text-align: center;
+  padding: 20px;
+}
 
-    // Log Firebase config to console for debugging
-    console.log("Firebase Config:", firebaseConfig);
+.login input {
+  margin: 8px;
+  padding: 10px;
+  border-radius: 12px;
+  border: none;
+  font-size: 16px;
+}
 
-    // Firebase Authentication Listener
-    useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (user) => {
-            if (!user) {
-                // If no user is logged in, try to sign in with custom token or anonymously
-                try {
-                    console.log("Attempting anonymous sign-in. Auth object:", auth); // Debug log
-                    await signInAnonymously(auth);
-                } catch (error) {
-                    console.error("Error signing in:", error);
-                    // Provide a more specific message for the user
-                    if (error.code === 'auth/configuration-not-found') {
-                        setMessage("Authentication setup error: Please ensure Firebase Authentication is enabled and Anonymous sign-in is active in your Firebase Console.");
-                    } else {
-                        setMessage("Authentication failed. Please try again.");
-                    }
-                }
-            }
-            // Set userId after auth state is determined. This userId is for private data.
-            setUserId(auth.currentUser?.uid || crypto.randomUUID());
-            setIsAuthReady(true);
-        });
-        return () => unsubscribe();
-    }, []);
+.login button {
+  padding: 10px 20px;
+  font-size: 18px;
+  border-radius: 20px;
+  background: #ff6f61;
+  color: white;
+  border: none;
+  cursor: pointer;
+}
 
-    const handleLoginSuccess = (username) => {
-        setLoggedInUser(username);
-        setCurrentPage('game');
-        setMessage('');
-    };
+.error {
+  color: red;
+  margin-top: 10px;
+}
 
-    const handleLogout = () => {
-        setLoggedInUser(null);
-        setCurrentPage('login');
-        setMessage('');
-    };
+.poop {
+  font-size: 40px;
+  position: absolute;
+  cursor: pointer;
+  transition: all 0.3s ease;
+}
 
-    const navigateToLeaderboard = () => {
-        setCurrentPage('leaderboard');
-        setMessage('');
-    };
-
-    const navigateToGame = () => {
-        setCurrentPage('game');
-        setMessage('');
-    };
-
-    if (!isAuthReady) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-800 to-indigo-900 text-white">
-                <p className="text-xl animate-pulse">Loading game...</p>
-            </div>
-        );
-    }
-
-    return (
-        <div className="min-h-screen bg-gradient-to-br from-purple-800 to-indigo-900 text-white font-inter flex flex-col items-center justify-center p-4">
-            <h1 className="text-5xl md:text-7xl font-extrabold mb-8 text-yellow-300 drop-shadow-lg text-center">
-                Avigyan Kingdom
-            </h1>
-
-            {message && (
-                <div className="bg-red-500 text-white p-3 rounded-lg mb-4 shadow-md">
-                    {message}
-                </div>
-            )}
-
-            {currentPage === 'login' && (
-                <Login onLoginSuccess={handleLoginSuccess} setMessage={setMessage} />
-            )}
-
-            {currentPage === 'game' && loggedInUser && userId && (
-                <Game
-                    loggedInUser={loggedInUser}
-                    userId={userId} // userId for private data
-                    db={db}
-                    navigateToLeaderboard={navigateToLeaderboard}
-                    handleLogout={handleLogout}
-                />
-            )}
-
-            {currentPage === 'leaderboard' && userId && ( // userId not strictly needed for public leaderboard, but kept for consistency
-                <Leaderboard
-                    db={db}
-                    navigateToGame={navigateToGame}
-                    handleLogout={handleLogout}
-                />
-            )}
-        </div>
-    );
-};
-
-// Login Component
-const Login = ({ onLoginSuccess, setMessage }) => {
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-
-    const handleLogin = (e) => {
-        e.preventDefault();
-        if (USERS[username] === password) {
-            onLoginSuccess(username);
-        } else {
-            setMessage('Invalid username or password.');
-        }
-    };
-
-    return (
-        <div className="bg-white bg-opacity-10 backdrop-filter backdrop-blur-lg p-8 rounded-2xl shadow-2xl w-full max-w-md border border-purple-500 transform transition-all duration-300 hover:scale-105">
-            <h2 className="text-3xl font-bold text-center mb-6 text-yellow-200">Login</h2>
-            <form onSubmit={handleLogin} className="space-y-6">
-                <div>
-                    <label className="block text-purple-200 text-sm font-semibold mb-2" htmlFor="username">
-                        Username
-                    </label>
-                    <input
-                        type="text"
-                        id="username"
-                        className="w-full p-3 rounded-lg bg-purple-700 bg-opacity-50 text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-400 border border-purple-600"
-                        value={username}
-                        onChange={(e) => setUsername(e.target.value)}
-                        required
-                    />
-                </div>
-                <div>
-                    <label className="block text-purple-200 text-sm font-semibold mb-2" htmlFor="password">
-                        Password
-                    </label>
-                    <input
-                        type="password"
-                        id="password"
-                        className="w-full p-3 rounded-lg bg-purple-700 bg-opacity-50 text-white placeholder-purple-300 focus:outline-none focus:ring-2 focus:ring-purple-400 border border-purple-600"
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        required
-                    />
-                </div>
-                <button
-                    type="submit"
-                    className="w-full bg-yellow-400 text-purple-900 font-bold py-3 px-4 rounded-lg shadow-lg hover:bg-yellow-300 transition duration-300 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-yellow-500 focus:ring-offset-2 focus:ring-offset-purple-800"
-                >
-                    Enter Kingdom
-                </button>
-            </form>
-        </div>
-    );
-};
-
-// Game Component
-const Game = ({ loggedInUser, userId, db, navigateToLeaderboard, handleLogout }) => {
-    const GAME_DURATION = 30; // seconds
-    const MISS_LIMIT = 5;
-
-    // Difficulty settings
-    const DIFFICULTY_SETTINGS = {
-        easy: {
-            EMOJI_SPAWN_INTERVAL: 1200, // ms
-            EMOJI_SPEED_INITIAL: 1.5, // pixels per frame
-        },
-        medium: {
-            EMOJI_SPAWN_INTERVAL: 800,
-            EMOJI_SPEED_INITIAL: 2,
-        },
-        hard: {
-            EMOJI_SPAWN_INTERVAL: 500,
-            EMOJI_SPEED_INITIAL: 3,
-        },
-    };
-
-    const [score, setScore] = useState(0);
-    const [missedCount, setMissedCount] = useState(0);
-    const [timer, setTimer] = useState(GAME_DURATION);
-    const [emojis, setEmojis] = useState([]);
-    const [gameStarted, setGameStarted] = useState(false);
-    const [gameOver, setGameOver] = useState(false);
-    const [message, setMessage] = useState('');
-    const [difficulty, setDifficulty] = useState('medium'); // Default difficulty
-
-    const gameIntervalRef = useRef(null);
-    const emojiSpawnIntervalRef = useRef(null);
-    const emojiFallIntervalRef = useRef(null);
-    const gameAreaRef = useRef(null);
-
-    const emojiTypes = ['💩'];
-    const bonusEmojiType = '💰';
-
-    // Function to save score to Firestore
-    const saveScore = useCallback(async (finalScore) => {
-        if (!userId || !loggedInUser) {
-            console.error("User ID or loggedInUser is not available for saving score.");
-            return;
-        }
-
-        const today = new Date().toISOString().slice(0, 10); //YYYY-MM-DD
-
-        // --- Save to Private Collections (for user's personal tracking) ---
-        const privateDailyScoreDocRef = doc(db, `artifacts/${appId}/users/${userId}/dailyScores`, today);
-        const privateTotalScoreDocRef = doc(db, `artifacts/${appId}/users/${userId}/totalScores`, loggedInUser);
-
-        try {
-            // Private Daily Score
-            const privateDailyDocSnap = await getDoc(privateDailyScoreDocRef);
-            if (privateDailyDocSnap.exists()) {
-                const currentPrivateDailyScore = privateDailyDocSnap.data().score || 0;
-                if (finalScore > currentPrivateDailyScore) {
-                    await updateDoc(privateDailyScoreDocRef, {
-                        score: finalScore,
-                        username: loggedInUser,
-                        timestamp: serverTimestamp(),
-                    });
-                }
-            } else {
-                await setDoc(privateDailyScoreDocRef, {
-                    score: finalScore,
-                    username: loggedInUser,
-                    date: today,
-                    timestamp: serverTimestamp(),
-                });
-            }
-
-            // Private Total Score
-            const privateTotalDocSnap = await getDoc(privateTotalScoreDocRef);
-            if (privateTotalDocSnap.exists()) {
-                await updateDoc(privateTotalScoreDocRef, {
-                    totalScore: increment(finalScore),
-                    username: loggedInUser,
-                    lastUpdated: serverTimestamp(),
-                });
-            } else {
-                await setDoc(privateTotalScoreDocRef, {
-                    totalScore: finalScore,
-                    username: loggedInUser,
-                    createdAt: serverTimestamp(),
-                });
-            }
-
-            // --- Save to Public Collections (for global leaderboard) ---
-            const publicDailyScoreDocRef = doc(db, `artifacts/${appId}/public/data/publicDailyScores`, loggedInUser); // Doc ID is username for daily best
-            const publicTotalScoreDocRef = doc(db, `artifacts/${appId}/public/data/publicTotalScores`, loggedInUser); // Doc ID is username for total
-
-            // Public Daily Score (update if new score is higher)
-            const publicDailyDocSnap = await getDoc(publicDailyScoreDocRef);
-            if (publicDailyDocSnap.exists()) {
-                const currentPublicDailyScore = publicDailyDocSnap.data().score || 0;
-                if (finalScore > currentPublicDailyScore) {
-                    await updateDoc(publicDailyScoreDocRef, {
-                        score: finalScore,
-                        username: loggedInUser,
-                        date: today, // Store today's date for reference
-                        timestamp: serverTimestamp(),
-                    });
-                }
-            } else {
-                await setDoc(publicDailyScoreDocRef, {
-                    score: finalScore,
-                    username: loggedInUser,
-                    date: today,
-                    timestamp: serverTimestamp(),
-                });
-            }
-
-            // Public Total Score (always increment)
-            const publicTotalDocSnap = await getDoc(publicTotalScoreDocRef);
-            if (publicTotalDocSnap.exists()) {
-                await updateDoc(publicTotalScoreDocRef, {
-                    totalScore: increment(finalScore),
-                    username: loggedInUser,
-                    lastUpdated: serverTimestamp(),
-                });
-            } else {
-                await setDoc(publicTotalScoreDocRef, {
-                    totalScore: finalScore,
-                    username: loggedInUser,
-                    createdAt: serverTimestamp(),
-                });
-            }
-
-            setMessage(`Score ${finalScore} saved successfully to both private and public leaderboards!`);
-        } catch (error) {
-            console.error("Error saving score:", error);
-            setMessage("Failed to save score. Please try again.");
-        }
-    }, [userId, loggedInUser, db]);
-
-    // Game End Logic
-    const endGame = useCallback(() => {
-        setGameOver(true);
-        clearInterval(gameIntervalRef.current);
-        clearInterval(emojiSpawnIntervalRef.current);
-        clearInterval(emojiFallIntervalRef.current);
-        saveScore(score); // Save the final score
-    }, [score, saveScore]);
-
-    // Game Timer
-    useEffect(() => {
-        if (gameStarted && !gameOver) {
-            gameIntervalRef.current = setInterval(() => {
-                setTimer((prevTimer) => {
-                    if (prevTimer <= 1) {
-                        endGame();
-                        return 0;
-                    }
-                    return prevTimer - 1;
-                });
-            }, 1000);
-        }
-        return () => clearInterval(gameIntervalRef.current);
-    }, [gameStarted, gameOver, endGame]);
-
-    // Emoji Spawning
-    useEffect(() => {
-        if (gameStarted && !gameOver) {
-            // Get current difficulty settings
-            const currentDifficulty = DIFFICULTY_SETTINGS[difficulty];
-            const spawnInterval = currentDifficulty.EMOJI_SPAWN_INTERVAL;
-            const initialSpeed = currentDifficulty.EMOJI_SPEED_INITIAL;
-
-            emojiSpawnIntervalRef.current = setInterval(() => {
-                if (gameAreaRef.current) {
-                    const gameAreaWidth = gameAreaRef.current.offsetWidth;
-                    const type = Math.random() < 0.15 ? bonusEmojiType : emojiTypes[0];
-                    const newEmoji = {
-                        id: Date.now() + Math.random(),
-                        x: Math.random() * (gameAreaWidth - 50),
-                        y: -50,
-                        speed: initialSpeed + (score / 100), // Speed increases with score
-                        type: type,
-                        points: type === bonusEmojiType ? 10 : 1,
-                    };
-                    setEmojis((prevEmojis) => [...prevEmojis, newEmoji]);
-                }
-            }, spawnInterval); // Use difficulty-based spawn interval
-        }
-        return () => clearInterval(emojiSpawnIntervalRef.current);
-    }, [gameStarted, gameOver, score, difficulty]); // Add difficulty to dependencies
-
-    // Emoji Falling Logic
-    useEffect(() => {
-        if (gameStarted && !gameOver) {
-            emojiFallIntervalRef.current = setInterval(() => {
-                setEmojis((prevEmojis) => {
-                    const updatedEmojis = prevEmojis.map((emoji) => ({
-                        ...emoji,
-                        y: emoji.y + emoji.speed,
-                    }));
-
-                    const newMissedCount = missedCount + updatedEmojis.filter(
-                        (emoji) => gameAreaRef.current && emoji.y > gameAreaRef.current.offsetHeight
-                    ).length;
-
-                    setMissedCount(newMissedCount);
-
-                    if (newMissedCount >= MISS_LIMIT) {
-                        endGame();
-                    }
-
-                    return updatedEmojis.filter(
-                        (emoji) => gameAreaRef.current && emoji.y <= gameAreaRef.current.offsetHeight
-                    );
-                });
-            }, 20);
-        }
-        return () => clearInterval(emojiFallIntervalRef.current);
-    }, [gameStarted, gameOver, missedCount, endGame]);
-
-    // Handle Emoji Click
-    const handleEmojiClick = (id, points) => {
-        console.log('Emoji clicked!', { id, points });
-        setScore((prevScore) => prevScore + points);
-        setEmojis((prevEmojis) => prevEmojis.filter((emoji) => emoji.id !== id));
-    };
-
-    // Start Game
-    const startGame = () => {
-        setScore(0);
-        setMissedCount(0);
-        setTimer(GAME_DURATION);
-        setEmojis([]);
-        setGameOver(false);
-        setGameStarted(true);
-        setMessage('');
-    };
-
-    return (
-        <div className="flex flex-col items-center justify-center w-full max-w-4xl bg-white bg-opacity-10 backdrop-filter backdrop-blur-lg p-6 rounded-2xl shadow-2xl border border-purple-500">
-            <div className="flex justify-between w-full mb-4">
-                <button
-                    onClick={navigateToLeaderboard}
-                    className="bg-purple-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-purple-700 transition duration-300 transform hover:scale-105"
-                >
-                    Leaderboard
-                </button>
-                <button
-                    onClick={handleLogout}
-                    className="bg-red-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-red-700 transition duration-300 transform hover:scale-105"
-                >
-                    Logout ({loggedInUser})
-                </button>
-            </div>
-
-            <div className="text-center mb-6">
-                <h2 className="text-4xl font-bold text-yellow-200 mb-2">Welcome, {loggedInUser}!</h2>
-                <p className="text-purple-200 text-lg">Tap the falling emojis!</p>
-            </div>
-
-            <div className="flex justify-around w-full text-xl font-semibold mb-6 text-yellow-100">
-                <span>Score: {score}</span>
-                <span>Time: {timer}s</span>
-                <span>Misses: {missedCount}/{MISS_LIMIT}</span>
-                <span>Difficulty: {difficulty.charAt(0).toUpperCase() + difficulty.slice(1)}</span>
-            </div>
-
-            <div
-                ref={gameAreaRef}
-                className="relative w-full h-96 bg-purple-900 bg-opacity-50 rounded-lg overflow-hidden border-4 border-purple-700 shadow-inner"
-                style={{ cursor: gameStarted && !gameOver ? 'crosshair' : 'default' }}
-            >
-                {!gameStarted && !gameOver && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-70 text-white">
-                        <p className="text-3xl font-bold mb-4 animate-pulse">Choose Difficulty:</p>
-                        <div className="flex space-x-4 mb-6">
-                            {Object.keys(DIFFICULTY_SETTINGS).map((level) => (
-                                <button
-                                    key={level}
-                                    onClick={() => setDifficulty(level)}
-                                    className={`py-2 px-6 rounded-full shadow-lg transition duration-300 transform hover:scale-110 focus:outline-none focus:ring-4
-                                        ${difficulty === level
-                                            ? 'bg-yellow-400 text-purple-900 ring-yellow-300'
-                                            : 'bg-purple-700 text-white hover:bg-purple-600 ring-purple-500'
-                                        }`}
-                                >
-                                    {level.charAt(0).toUpperCase() + level.slice(1)}
-                                </button>
-                            ))}
-                        </div>
-                        <button
-                            onClick={startGame}
-                            className="bg-green-500 text-white font-bold py-3 px-8 rounded-full shadow-lg hover:bg-green-600 transition duration-300 transform hover:scale-110 focus:outline-none focus:ring-4 focus:ring-green-400"
-                        >
-                            Start Game
-                        </button>
-                    </div>
-                )}
-
-                {gameOver && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-70 text-white">
-                        <p className="text-4xl font-bold mb-4 text-red-400">Game Over!</p>
-                        <p className="text-3xl mb-6">Your Score: <span className="font-extrabold text-yellow-300">{score}</span></p>
-                        {message && <p className="text-lg text-green-300 mb-4">{message}</p>}
-                        <button
-                            onClick={startGame}
-                            className="bg-blue-500 text-white font-bold py-3 px-8 rounded-full shadow-lg hover:bg-blue-600 transition duration-300 transform hover:scale-110 focus:outline-none focus:ring-4 focus:ring-blue-400"
-                        >
-                            Play Again
-                        </button>
-                    </div>
-                )}
-
-                {emojis.map((emoji) => (
-                    <div
-                        key={emoji.id}
-                        className="absolute text-4xl cursor-pointer select-none transition-transform duration-75 ease-out active:scale-75 z-10"
-                        style={{ left: emoji.x, top: emoji.y }}
-                        onClick={() => handleEmojiClick(emoji.id, emoji.points)}
-                    >
-                        {emoji.type}
-                    </div>
-                ))}
-            </div>
-        </div>
-    );
-};
-
-// Leaderboard Component
-const Leaderboard = ({ db, navigateToGame, handleLogout }) => {
-    const [dailyScores, setDailyScores] = useState([]);
-    const [totalScores, setTotalScores] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [message, setMessage] = useState('');
-
-    useEffect(() => {
-        // Listen for public daily scores
-        const publicDailyScoresQuery = query(
-            collection(db, `artifacts/${appId}/public/data/publicDailyScores`)
-        );
-
-        const unsubscribePublicDaily = onSnapshot(publicDailyScoresQuery, (snapshot) => {
-            const scores = snapshot.docs.map((doc) => ({
-                id: doc.id,
-                ...doc.data(),
-            }));
-            // Sort by score in descending order and take top 5
-            setDailyScores(scores.sort((a, b) => b.score - a.score).slice(0, 5));
-            setIsLoading(false);
-        }, (error) => {
-            console.error("Error fetching public daily scores:", error);
-            setMessage("Failed to load public daily leaderboard.");
-            setIsLoading(false);
-        });
-
-        // Listen for public total scores
-        const publicTotalScoresQuery = query(
-            collection(db, `artifacts/${appId}/public/data/publicTotalScores`)
-        );
-
-        const unsubscribePublicTotal = onSnapshot(publicTotalScoresQuery, (snapshot) => {
-            const scores = snapshot.docs.map((doc) => ({
-                id: doc.id,
-                ...doc.data(),
-            }));
-            // Sort by totalScore in descending order and take top 5
-            setTotalScores(scores.sort((a, b) => b.totalScore - a.totalScore).slice(0, 5));
-            setIsLoading(false);
-        }, (error) => {
-            console.error("Error fetching public total scores:", error);
-            setMessage("Failed to load public total leaderboard.");
-            setIsLoading(false);
-        });
-
-        return () => {
-            unsubscribePublicDaily();
-            unsubscribePublicTotal();
-        };
-    }, [db]);
-
-    if (isLoading) {
-        return (
-            <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-purple-800 to-indigo-900 text-white">
-                <p className="text-xl animate-pulse">Loading leaderboard...</p>
-            </div>
-        );
-    }
-
-    return (
-        <div className="flex flex-col items-center justify-center w-full max-w-4xl bg-white bg-opacity-10 backdrop-filter backdrop-blur-lg p-6 rounded-2xl shadow-2xl border border-purple-500">
-            <div className="flex justify-between w-full mb-4">
-                <button
-                    onClick={navigateToGame}
-                    className="bg-purple-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-purple-700 transition duration-300 transform hover:scale-105"
-                >
-                    Back to Game
-                </button>
-                <button
-                    onClick={handleLogout}
-                    className="bg-red-600 text-white font-bold py-2 px-4 rounded-lg shadow-md hover:bg-red-700 transition duration-300 transform hover:scale-105"
-                >
-                    Logout
-                </button>
-            </div>
-
-            <h2 className="text-4xl font-bold text-yellow-200 mb-6">Leaderboard</h2>
-            {message && (
-                <div className="bg-red-500 text-white p-3 rounded-lg mb-4 shadow-md">
-                    {message}
-                </div>
-            )}
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 w-full">
-                {/* Daily Leaderboard */}
-                <div className="bg-purple-900 bg-opacity-30 p-6 rounded-xl shadow-lg border border-purple-600">
-                    <h3 className="text-2xl font-bold text-yellow-100 mb-4 text-center">Daily Top 5 Scores</h3>
-                    {dailyScores.length === 0 ? (
-                        <p className="text-center text-purple-300">No daily scores yet.</p>
-                    ) : (
-                        <ul className="space-y-2">
-                            {dailyScores.map((entry, index) => (
-                                <li key={entry.id} className="flex justify-between items-center bg-purple-800 bg-opacity-50 p-3 rounded-lg shadow-md">
-                                    <span className="font-semibold text-white">{index + 1}. {entry.username}</span>
-                                    <span className="font-bold text-yellow-300">{entry.score}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-
-                {/* Total Leaderboard */}
-                <div className="bg-purple-900 bg-opacity-30 p-6 rounded-xl shadow-lg border border-purple-600">
-                    <h3 className="text-2xl font-bold text-yellow-100 mb-4 text-center">All-Time Top 5 Scores</h3>
-                    {totalScores.length === 0 ? (
-                        <p className="text-center text-purple-300">No total scores yet.</p>
-                    ) : (
-                        <ul className="space-y-2">
-                            {totalScores.map((entry, index) => (
-                                <li key={entry.id} className="flex justify-between items-center bg-purple-800 bg-opacity-50 p-3 rounded-lg shadow-md">
-                                    <span className="font-semibold text-white">{index + 1}. {entry.username}</span>
-                                    <span className="font-bold text-yellow-300">{entry.totalScore}</span>
-                                </li>
-                            ))}
-                        </ul>
-                    )}
-                </div>
-            </div>
-        </div>
-    );
-};
-
-export default App;
+.misszone {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 0;
+}
